@@ -38,6 +38,7 @@ let bodySensorLocationCharacteristicCBUUID = CBUUID(string: "2A38")
 class HRMViewController: UIViewController {
 
   @IBOutlet weak var heartRateLabel: UILabel!
+  @IBOutlet weak var rrLabel: UILabel!
   @IBOutlet weak var bodySensorLocationLabel: UILabel!
 
   var centralManager: CBCentralManager!
@@ -55,6 +56,9 @@ class HRMViewController: UIViewController {
 
   func onHeartRateReceived(_ heartRate: Int, _ rrs:[Int], _ energy: Int) {
     heartRateLabel.text = String(heartRate)
+    if (rrs.count > 0) {
+      rrLabel.text = String(rrs[0])
+    }
     print("BPM: \(heartRate) RRs: \(rrs) Energy: \(energy)")
   }
 }
@@ -155,7 +159,6 @@ extension HRMViewController: CBPeripheralDelegate {
   func parseHeartRate(_ characteristic: CBCharacteristic){
     let data = characteristic.value
     let hrFormat = data![0] & 0x01;
-    let sensorContactBits = Int((data![0] & 0x06) >> 1)
     let energyExpended = (data![0] & 0x08) >> 3;
     let rrPresent = (data![0] & 0x10) >> 4;
     let hrValue = hrFormat == 1 ? (Int(data![1]) + (Int(data![2]) << 8)) : Int(data![1]);
