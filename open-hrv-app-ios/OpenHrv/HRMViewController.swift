@@ -45,16 +45,17 @@ class HRMViewController: UIViewController {
 
   override func viewDidLoad() {
     super.viewDidLoad()
-
     centralManager = CBCentralManager(delegate: self, queue: nil)
-
-    // Make the digits monospaces to avoid shifting when the numbers change
     heartRateLabel.font = UIFont.monospacedDigitSystemFont(ofSize: heartRateLabel.font!.pointSize, weight: .regular)
   }
+  
+  func onBodySensorLocationReceived(_ bodySensorLocation: String) {
+    bodySensorLocationLabel.text = bodySensorLocation
+  }
 
-  func onHeartRateReceived(_ heartRate: Int) {
+  func onHeartRateReceived(_ heartRate: Int, _ rrs:[Int], _ energy: Int) {
     heartRateLabel.text = String(heartRate)
-    print("BPM: \(heartRate)")
+    print("BPM: \(heartRate) RRs: \(rrs) Energy: \(energy)")
   }
 }
 
@@ -79,7 +80,7 @@ extension HRMViewController: CBCentralManagerDelegate {
 
   func centralManager(_ central: CBCentralManager, didDiscover peripheral: CBPeripheral,
                       advertisementData: [String : Any], rssi RSSI: NSNumber) {
-    print(peripheral)
+    print("Discovered \(peripheral.name ?? "")")
     heartRatePeripheral = peripheral
     heartRatePeripheral.delegate = self
     centralManager.stopScan()
@@ -87,7 +88,7 @@ extension HRMViewController: CBCentralManagerDelegate {
   }
 
   func centralManager(_ central: CBCentralManager, didConnect peripheral: CBPeripheral) {
-    print("Connected!")
+    print("Connected \(peripheral.name ?? "")")
     heartRatePeripheral.discoverServices([heartRateServiceCBUUID])
   }
 }
@@ -119,49 +120,61 @@ extension HRMViewController: CBPeripheralDelegate {
   }
 
   func peripheral(_ peripheral: CBPeripheral, didUpdateValueFor characteristic: CBCharacteristic, error: Error?) {
+    if error != nil {
+      print("Error in peripheral method: \(error.debugDescription)")
+      return
+    }
+    
     switch characteristic.uuid {
     case bodySensorLocationCharacteristicCBUUID:
-      let bodySensorLocation = bodyLocation(from: characteristic)
-      bodySensorLocationLabel.text = bodySensorLocation
+      parseBodySensorLocation(characteristic)
     case heartRateMeasurementCharacteristicCBUUID:
-      let bpm = heartRate(from: characteristic)
-      onHeartRateReceived(bpm)
+      parseHeartRate(characteristic)
     default:
       print("Unhandled Characteristic UUID: \(characteristic.uuid)")
     }
   }
 
-  private func bodyLocation(from characteristic: CBCharacteristic) -> String {
+  private func parseBodySensorLocation(_ characteristic: CBCharacteristic) {
     guard let characteristicData = characteristic.value,
-      let byte = characteristicData.first else { return "Error" }
+      let byte = characteristicData.first else { return; }
 
     switch byte {
-    case 0: return "Other"
-    case 1: return "Chest"
-    case 2: return "Wrist"
-    case 3: return "Finger"
-    case 4: return "Hand"
-    case 5: return "Ear Lobe"
-    case 6: return "Foot"
+    case 0: onBodySensorLocationReceived("Other"); return
+    case 1: onBodySensorLocationReceived("Chest"); return
+    case 2: onBodySensorLocationReceived("Wrist"); return
+    case 3: onBodySensorLocationReceived("Finger"); return
+    case 4: onBodySensorLocationReceived("Hand"); return
+    case 5: onBodySensorLocationReceived("Ear Lobe"); return
+    case 6: onBodySensorLocationReceived("Foot"); return
     default:
-      return "Reserved for future use"
+      onBodySensorLocationReceived("Reserved for future use"); return
     }
   }
-
-  private func heartRate(from characteristic: CBCharacteristic) -> Int {
-    guard let characteristicData = characteristic.value else { return -1 }
-    let byteArray = [UInt8](characteristicData)
-
-    // See: https://www.bluetooth.com/specifications/gatt/viewer?attributeXmlFile=org.bluetooth.characteristic.heart_rate_measurement.xml
-    // The heart rate mesurement is in the 2nd, or in the 2nd and 3rd bytes, i.e. one one or in two bytes
-    // The first byte of the first bit specifies the length of the heart rate data, 0 == 1 byte, 1 == 2 bytes
-    let firstBitValue = byteArray[0] & 0x01
-    if firstBitValue == 0 {
-      // Heart Rate Value Format is in the 2nd byte
-      return Int(byteArray[1])
-    } else {
-      // Heart Rate Value Format is in the 2nd and 3rd bytes
-      return (Int(byteArray[1]) << 8) + Int(byteArray[2])
+  
+  func parseHeartRate(_ characteristic: CBCharacteristic){
+    let data = characteristic.value
+    let hrFormat = data![0] & 0x01;
+    let sensorContactBits = Int((data![0] & 0x06) >> 1)
+    let energyExpended = (data![0] & 0x08) >> 3;
+    let rrPresent = (data![0] & 0x10) >> 4;
+    let hrValue = hrFormat == 1 ? (Int(data![1]) + (Int(data![2]) << 8)) : Int(data![1]);
+    var offset = Int(hrFormat) + 2;
+    var energy = 0
+    if (energyExpended == 1) {
+      energy = Int(data![offset]) + (Int(data![offset + 1]) << 8);
+      offset += 2;
     }
+    var rrs = [Int]()
+    if( rrPresent == 1 ){
+      let len = data!.count
+      while (offset < len) {
+        let rrValueRaw = Int(data![offset]) | (Int(data![offset + 1]) << 8)
+        let rrValue = Int((Double(rrValueRaw) / 1024.0) * 1000.0);
+        offset += 2;
+        rrs.append(rrValue);
+      }
+    }
+    onHeartRateReceived(hrValue, rrs, energy)
   }
 }
