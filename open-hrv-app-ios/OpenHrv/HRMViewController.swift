@@ -60,7 +60,93 @@ class HRMViewController: UIViewController {
       rrLabel.text = String(rrs[0])
     }
     print("BPM: \(heartRate) RRs: \(rrs) Energy: \(energy)")
+    postHeartRateData(heartRate: heartRate, rrs: rrs)
   }
+  
+  var apiUrl: String = "http://192.168.71.107:8080/api"
+  var httpSecurityToken: String? = nil
+  
+  
+  private func postHeartRateData(heartRate: Int, rrs: [Int]) {
+    if (httpSecurityToken == nil) {
+      getSecurityToken()
+    } else {
+      let url = URL(string: apiUrl + "/health/heartrate")!
+      
+      var json = [String:Any]()
+      
+      let formatter = ISO8601DateFormatter()
+      formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+      
+      json["hr"] = heartRate
+      json["rrs"] = rrs
+      json["time"] = formatter.string(from: Date())
+      
+      guard let data = try? JSONSerialization.data(withJSONObject: json) else {
+        print("Error in JSON serialization of data.")
+        return
+      }
+      
+      var request = URLRequest(url: url)
+      request.setValue("SecurityToken token='" + httpSecurityToken! + "'", forHTTPHeaderField: "Authorization")
+      request.httpMethod = "POST"
+      request.httpBody = data
+      request.addValue("application/json", forHTTPHeaderField: "Content-Type")
+      request.addValue("application/json", forHTTPHeaderField: "Accept")
+      
+      print("posting to server: " + String(data: data, encoding: String.Encoding.utf8)!)
+      
+      URLSession.shared.dataTask(with: request) {(data, response, error) in
+        if let httpResponse = response as? HTTPURLResponse {
+          if (httpResponse.statusCode != 200) {
+            print("Error status code \(httpResponse.statusCode)")
+            if (httpResponse.statusCode == 401) {
+              self.httpSecurityToken = nil
+            }
+            if (error != nil) {
+              print("Error: " + error.debugDescription);
+            }
+          }
+        }
+        
+        if (data != nil) {
+          print(String(data: data!, encoding: String.Encoding.utf8)!)
+        }
+        }.resume()
+    }
+  }
+  
+  private func getSecurityToken() {
+    let url = URL(string: apiUrl + "/security/context")!
+    var request = URLRequest(url: url)
+    
+    let credentials = "default.client:password1234"
+    let credentialsBase64 = credentials.base64Encoded()!
+    
+    request.setValue("Basic " + credentialsBase64, forHTTPHeaderField: "Authorization")
+
+    URLSession.shared.dataTask(with: request) {(data, response, error) in
+      if let httpResponse = response as? HTTPURLResponse {
+        if (httpResponse.statusCode == 200) {
+          if let securityToken = httpResponse.allHeaderFields["Security-Token"] as? String {
+            let encodedSecurityToken = securityToken.addingPercentEncoding(withAllowedCharacters:NSCharacterSet.alphanumerics)!
+            print("received security token: \(securityToken) / \(encodedSecurityToken)")
+            self.httpSecurityToken = encodedSecurityToken
+          }
+        } else {
+          print("Error status code \(httpResponse.statusCode)")
+          if (error != nil) {
+            print("Error: " + error.debugDescription);
+          }
+        }
+      }
+      
+      if (data != nil) {
+        print(String(data: data!, encoding: String.Encoding.utf8)!)
+      }
+    }.resume()
+  }
+  
 }
 
 extension HRMViewController: CBCentralManagerDelegate {
